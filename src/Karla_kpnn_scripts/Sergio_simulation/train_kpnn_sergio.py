@@ -8,11 +8,11 @@ import kpnn
 
 # ===== paths =====
 project_root = Path(__file__).resolve().parents[3]
-edgelist_path = project_root / "src/Karla_kpnn_csv/TGFB1_tf_only_edgelist_filtered.tsv"
+edgelist_path = project_root / "src/Karla_kpnn_csv/INS_tf_only_edgelist_filtered.tsv"
 config_yaml = Path(__file__).resolve().parent / "kpnn_config.yaml"
-output_path = project_root / "results_t1/kpnn_output/sergio/TGFB1_o_A_vs_B/alter_nothing"
+output_path = project_root / "results_t1/kpnn_output/sergio/INS_o_A_vs_B/alter_nothing"
 
-sergio_run_dir = project_root / "results_t1/KO_simulation/sergio/sergio_TGFB1_o"
+sergio_run_dir = project_root / "results_t1/KO_simulation/sergio/sergio_INS"
 
 
 def _find_latest_split_files(run_dir: Path) -> tuple[str, str, str]:
@@ -25,11 +25,11 @@ def _find_latest_split_files(run_dir: Path) -> tuple[str, str, str]:
             "Run preprocess_sergio_for_kpnn.py first."
         )
     latest = candidates[-1]
-    train = sorted(latest.glob("*_train.h5ad"))
-    val = sorted(latest.glob("*_val.h5ad"))
-    test = sorted(latest.glob("*_test.h5ad"))
+    train = sorted(latest.glob("*.h5ad_train"))
+    val = sorted(latest.glob("*.h5ad_val"))
+    test = sorted(latest.glob("*.h5ad_test"))
     if not (train and val and test):
-        raise FileNotFoundError(f"Missing train/val/test .h5ad files under {latest}")
+        raise FileNotFoundError(f"Missing train/val/test files under {latest}")
     return str(train[0]), str(val[0]), str(test[0])
 
 

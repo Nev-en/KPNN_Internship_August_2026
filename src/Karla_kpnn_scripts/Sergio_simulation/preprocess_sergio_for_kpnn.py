@@ -7,12 +7,9 @@ import kpnn
 
 # ==== PATHS & SETTINGS (edit these) ==========================================
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_SERGIO_RUN_DIR = PROJECT_ROOT / "results_t1" / "KO_simulation" / "sergio" / "sergio_TGFB1_o"
+_SERGIO_RUN_DIR = PROJECT_ROOT / "results_t1" / "KO_simulation" / "sergio" / "sergio_TNFA"
 
-# NOTE: this .h5ad does not exist yet — sergio_simulate_data.py only writes
-# X_nt.csv/y_nt.csv/W.csv. You need a CSV -> AnnData(.h5ad) conversion step
-# (with .obs["cell_type"] set from y) before this script can run.
-IN_H5AD   = _SERGIO_RUN_DIR / "sergio_TGFB1_o_nt_only.h5ad"
+IN_H5AD   = _SERGIO_RUN_DIR / "sergio_TNFA_nt_only.h5ad"
 OUT_DIR   = _SERGIO_RUN_DIR   # writes train/val/test here
 OVERWRITE_INPUT = True   # if True, write the sparse-repaired h5ad back to IN_H5AD
 

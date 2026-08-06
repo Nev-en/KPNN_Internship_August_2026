@@ -462,6 +462,10 @@ def predict_tf_ko_effect(
     This is the closed-form analogue of an LDA-style separation analysis in TF space.
     It avoids retraining and runs in milliseconds for small–moderate T.
     """
+    geometry = _resolve_geometry(
+        geometry,
+        ko_scope
+    )
 
     _validate_predict_tf_ko_effect_inputs(
         A=A,
@@ -481,10 +485,7 @@ def predict_tf_ko_effect(
         fallback_euclidean=fallback_euclidean,
     )
 
-    geometry = _resolve_geometry(
-        geometry,
-        ko_scope
-    )
+
 
     # ---------- construct TF-space ----------
     if A is None:
