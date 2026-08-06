@@ -1,0 +1,25 @@
+additional_settings:
+  classification_mode: binary
+  data_label_column: cell_type_class_int #kpnn_label #drug_class_int #cell_type_class_int  # gene_class_int
+  dataset_name: "TGF-\u03B2"
+  device: cpu
+  infidelity_n_perturbations: 100
+  max_sensitivity_n_perturbations: 10
+nn_hyperparameters:
+  activation_function:
+    name: prelu
+    params:
+      init: 0.25
+  batch_norm: false
+  dropout: 0.2
+  l1_regularization: 0
+  lr: 0.02
+  lr_scheduler:
+    gamma: 0.1
+    step_size: 10
+    type: StepLR
+  minibatch_size: 64
+  num_epochs: 5
+  optimizer: Adam
+  output_activation: sigmoid
+  weight_decay: 0
