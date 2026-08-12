@@ -1,4 +1,5 @@
 # train_kpnn_on_sergio.py
+import os
 import anndata as ad
 import pandas as pd
 from pathlib import Path
@@ -7,12 +8,16 @@ import numpy as np
 import kpnn
 
 # ===== paths =====
-project_root = Path(__file__).resolve().parents[3]
-edgelist_path = project_root / "src/Karla_kpnn_csv/INS_tf_only_edgelist_filtered.tsv"
-config_yaml = Path(__file__).resolve().parent / "kpnn_config.yaml"
-output_path = project_root / "results_t1/kpnn_output/sergio/INS_o_A_vs_B/alter_nothing"
+# COND / RESULTS_DIR can be overridden via environment variables.
+COND = os.environ.get("SERGIO_COND", "INS")
+RESULTS_DIR = os.environ.get("RESULTS_DIR", "results_t1_2")
 
-sergio_run_dir = project_root / "results_t1/KO_simulation/sergio/sergio_INS"
+project_root = Path(__file__).resolve().parents[3]
+edgelist_path = project_root / f"src/Karla_kpnn_csv/{COND}_tf_only_edgelist_filtered.tsv"
+config_yaml = Path(__file__).resolve().parent / "kpnn_config.yaml"
+output_path = project_root / f"{RESULTS_DIR}/kpnn_output/sergio/{COND}_o_A_vs_B/alter_nothing"
+
+sergio_run_dir = project_root / f"{RESULTS_DIR}/KO_simulation/sergio/sergio_{COND}"
 
 
 def _find_latest_split_files(run_dir: Path) -> tuple[str, str, str]:

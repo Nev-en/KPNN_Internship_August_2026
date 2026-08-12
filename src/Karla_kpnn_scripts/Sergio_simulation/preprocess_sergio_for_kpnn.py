@@ -1,4 +1,5 @@
 # preprocess_sergio_for_kpnn.py
+import os
 from pathlib import Path
 import anndata as ad
 from scipy.sparse import csr_matrix, issparse
@@ -6,10 +7,14 @@ import numpy as np
 import kpnn
 
 # ==== PATHS & SETTINGS (edit these) ==========================================
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-_SERGIO_RUN_DIR = PROJECT_ROOT / "results_t1" / "KO_simulation" / "sergio" / "sergio_TNFA"
+# COND / RESULTS_DIR can be overridden via environment variables.
+COND = os.environ.get("SERGIO_COND", "TNFA")
+RESULTS_DIR = os.environ.get("RESULTS_DIR", "results_t1_2")
 
-IN_H5AD   = _SERGIO_RUN_DIR / "sergio_TNFA_nt_only.h5ad"
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+_SERGIO_RUN_DIR = PROJECT_ROOT / RESULTS_DIR / "KO_simulation" / "sergio" / f"sergio_{COND}"
+
+IN_H5AD   = _SERGIO_RUN_DIR / f"sergio_{COND}_nt_only.h5ad"
 OUT_DIR   = _SERGIO_RUN_DIR   # writes train/val/test here
 OVERWRITE_INPUT = True   # if True, write the sparse-repaired h5ad back to IN_H5AD
 

@@ -1,11 +1,18 @@
 # make_adata_from_sergio.py
+import os
 from pathlib import Path
 import pandas as pd
 import numpy as np
 import anndata as ad
 
 # === paths ===
-sergio_dir = Path("C:/Users/durie/PycharmProjects/PythonProject/results_t1/KO_simulation/sergio/sergio_TNFA")
+# COND / RESULTS_DIR can be overridden via environment variables so the same
+# script can be driven over all conditions without editing it each time.
+COND = os.environ.get("SERGIO_COND", "TNFA")
+RESULTS_DIR = os.environ.get("RESULTS_DIR", "results_t1_2")
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+sergio_dir = PROJECT_ROOT / RESULTS_DIR / "KO_simulation" / "sergio" / f"sergio_{COND}"
 x_path = sergio_dir / "X_nt.csv"
 y_path = sergio_dir / "y_nt.csv"   # will be optional
 
@@ -31,6 +38,6 @@ adata = ad.AnnData(
 )
 
 # === write ===
-out_h5ad = sergio_dir / "sergio_TNFA_nt_only.h5ad"
+out_h5ad = sergio_dir / f"sergio_{COND}_nt_only.h5ad"
 adata.write(out_h5ad, compression="gzip")
 print("✅ Wrote:", out_h5ad)
