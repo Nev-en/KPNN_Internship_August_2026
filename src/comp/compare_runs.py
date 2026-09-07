@@ -21,8 +21,15 @@ LABEL_A = os.environ.get("LABEL_A", "t1_2 KPNN")
 LABEL_B = os.environ.get("LABEL_B", "t1_3 KPNN")
 OUT_NAME = os.environ.get("COMPARISON_OUT", f"{RUN_A}_vs_{RUN_B}".replace("results_", ""))
 
+# comp/ is split by experiment generation: t1 holds the kpnn v1 era material,
+# t2 the kpnn2 one. Set COMP_SUBDIR="" to write flat into comp/ as before.
+COMP_SUBDIR = os.environ.get("COMP_SUBDIR", "t2")
+COMP_ROOT = PROJECT_ROOT / "comp" / COMP_SUBDIR if COMP_SUBDIR else PROJECT_ROOT / "comp"
+
 CONDITIONS = ["IFNB", "IFNG", "INS", "TGFB1", "TNFA"]
-LAYER_FILES = {0: "hidden_layer_1_attributions.csv", 1: "input_layer_feature_attributions.csv"}
+# Standard numbering: layer 0 is the input layer, layer 1 the first hidden
+# layer. Tables written before this change use the opposite convention.
+LAYER_FILES = {0: "input_layer_feature_attributions.csv", 1: "hidden_layer_1_attributions.csv"}
 
 # must match compare_karla_benjamin.py / plot_karla_benjamin_scatter.py
 SEP = ";"
@@ -38,14 +45,35 @@ def load_long(path, layer):
 
 
 def scores_dir(results_dir, cond):
-    """Newest kpnn_output_* run for a condition, or None."""
-    base = PROJECT_ROOT / results_dir / "kpnn_output/sergio" / f"{cond}_o_A_vs_B" / "alter_nothing"
-    runs = sorted(p for p in base.glob("kpnn_output_*") if p.is_dir())
-    return runs[-1] / "importance_scores" / "aggregated_scores" if runs else None
+    """Newest aggregated_scores folder for a condition, whichever layout wrote it.
+
+    The kpnn entry points nest their output differently:
+      kpnn v1 / kpnn2_training.py
+          <root>/kpnn_output/sergio/<COND>_o_A_vs_B/alter_nothing/
+          kpnn_output_<ts>/importance_scores/aggregated_scores
+      kpnn2_native.py
+          <root>/<COND>/run_<ts>/aggregated_scores
+
+    Folder names carry timestamps, so a lexical sort is chronological.
+    """
+    root = PROJECT_ROOT / results_dir
+    bases = [
+        root / "kpnn_output/sergio" / f"{cond}_o_A_vs_B",
+        root / cond,
+    ]
+    probe = Path("class_0") / LAYER_FILES[0]
+    runs = [
+        path
+        for base in bases
+        if base.is_dir()
+        for path in base.glob("**/aggregated_scores")
+        if (path / probe).exists()
+    ]
+    return sorted(runs)[-1] if runs else None
 
 
 def main():
-    out_dir = PROJECT_ROOT / "comp" / OUT_NAME
+    out_dir = COMP_ROOT / OUT_NAME
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Comparing {RUN_A} vs {RUN_B} -> {out_dir}\n")
 
