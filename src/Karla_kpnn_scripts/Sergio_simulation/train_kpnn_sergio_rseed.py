@@ -41,15 +41,36 @@ torch.set_num_interop_threads(1)
 torch.use_deterministic_algorithms(True)
 
 # ===== paths =====
-project_root = Path("/home/people/kmangano/masterthesis")
-edgelist_path = project_root / "data/edgelist/TGFB1/TGFB1_tf_only_edgelist_filtered.tsv"
-config_yaml = project_root / "src/masterscript/kpnn_config.yaml"
-output_path = project_root / "results/kpnn_output/sergio/TGFB1_repro1_A_vs_B/alter_nothing"
+# COND / RESULTS_DIR / DATA_DIR can be overridden via environment variables.
+# DATA_DIR holds already-preprocessed train/val/test splits, so the SERGIO
+# simulation, .h5ad conversion and KPNN preprocessing steps are all skipped.
+COND = os.environ.get("SERGIO_COND", "TGFB1")
+RESULTS_DIR = os.environ.get("RESULTS_DIR", "results_karla_data")
+DATA_DIR = os.environ.get("DATA_DIR", "Sergio_Data_Karla_new")
 
-# explicit split files (already decompressed/renamed to .h5ad)
-train_fp = "/vscratch/kmangano/KO_simulation/sergio/sergio_TGFB1/preprocessed_sergio_TGFB1_nt_only.h5ad_20251105_110510/sergio_TGFB1_nt_only.h5ad_train.h5ad"
-val_fp   = "/vscratch/kmangano/KO_simulation/sergio/sergio_TGFB1/preprocessed_sergio_TGFB1_nt_only.h5ad_20251105_110510/sergio_TGFB1_nt_only.h5ad_val.h5ad"
-test_fp  = "/vscratch/kmangano/KO_simulation/sergio/sergio_TGFB1/preprocessed_sergio_TGFB1_nt_only.h5ad_20251105_110510/sergio_TGFB1_nt_only.h5ad_test.h5ad"
+project_root = Path(__file__).resolve().parents[3]
+edgelist_path = project_root / f"src/Karla_kpnn_csv/{COND}_tf_only_edgelist_filtered.tsv"
+config_yaml = Path(__file__).resolve().parent / "kpnn_config.yaml"
+output_path = project_root / f"{RESULTS_DIR}/kpnn_output/sergio/{COND}_o_A_vs_B/alter_nothing"
+
+# explicit split files (already decompressed/renamed to .h5ad).
+# Filenames differ between conditions -- sergio_IFNB_nt_only.h5ad_train.h5ad vs
+# sergio_INS_nt_only_train.h5ad -- so match on the common suffix.
+split_dir = project_root / DATA_DIR / f"sergio_{COND}"
+
+
+def _find_split(suffix: str) -> str:
+    hits = sorted(split_dir.glob(f"*_{suffix}.h5ad"))
+    if len(hits) != 1:
+        raise FileNotFoundError(
+            f"expected exactly one *_{suffix}.h5ad in {split_dir}, found {[h.name for h in hits]}")
+    return str(hits[0])
+
+
+train_fp = _find_split("train")
+val_fp = _find_split("val")
+test_fp = _find_split("test")
+print(f"[{COND}] train={Path(train_fp).name}  val={Path(val_fp).name}  test={Path(test_fp).name}")
 
 # ===== load config (use exactly what's in YAML) =====
 with open(config_yaml, "r") as f:

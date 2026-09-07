@@ -5,3 +5,7 @@
 !/.gitignore
 !/src/
 !/src/**
+
+# but never bytecode, even under src/
+__pycache__/
+*.py[cod]

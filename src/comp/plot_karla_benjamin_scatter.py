@@ -15,14 +15,18 @@ Figures
                                whiskers = 1.5x IQR, points = values outside them.
 
 Scatter panels are split by layer because the two differ by orders of magnitude:
-layer 0 (hidden / TF nodes) is a few dozen nodes with attributions up to ~20,
-layer 1 (input / gene features) is thousands of nodes packed near zero.
-Overlaying them hides layer 1 completely.
+layer 1 (hidden / TF nodes) is a few dozen nodes with attributions up to ~20,
+layer 0 (input / gene features) is thousands of nodes packed near zero.
+Overlaying them hides layer 0 completely.
 
-Defaults to the NEW pinned-version comparison (comp/results_new_venv ->
-comp/plots_new_venv). Override with the COMPARISON_IN / PLOT_OUT environment
-variables; the two must be changed together or the output folder name will not
-match the data it holds.
+Paths
+-----
+Everything lives under comp/<COMP_SUBDIR>/, where COMP_SUBDIR splits the work by
+experiment generation: t1 is the kpnn v1 era, t2 (the default) the kpnn2 one.
+COMPARISON_IN names the table folder inside it and PLOT_OUT the figure folder --
+change the two together, or the output folder name will not match the data it
+holds. Both accept nested names, e.g. PLOT_OUT=plots/plots_foo. Set
+COMP_SUBDIR="" to read and write flat in comp/ as before.
 """
 import os
 from pathlib import Path
@@ -34,11 +38,16 @@ import numpy as np
 import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-IN_NAME = os.environ.get("COMPARISON_IN", "results_new_venv")
-OUT_NAME = os.environ.get("PLOT_OUT", "plots_new_venv")
+IN_NAME = os.environ.get("COMPARISON_IN", "karla_new_vs_kpnn2_native")
+OUT_NAME = os.environ.get("PLOT_OUT", "plots/plots_karla_new_vs_kpnn2_native")
 
-IN_DIR = PROJECT_ROOT / "comp" / IN_NAME
-OUT_DIR = PROJECT_ROOT / "comp" / OUT_NAME
+# comp/ is split by experiment generation: t1 holds the kpnn v1 era material,
+# t2 the kpnn2 one. Set COMP_SUBDIR="" to read/write flat in comp/ as before.
+COMP_SUBDIR = os.environ.get("COMP_SUBDIR", "t2")
+COMP_ROOT = PROJECT_ROOT / "comp" / COMP_SUBDIR if COMP_SUBDIR else PROJECT_ROOT / "comp"
+
+IN_DIR = COMP_ROOT / IN_NAME
+OUT_DIR = COMP_ROOT / OUT_NAME
 
 # must match compare_karla_benjamin.py
 COMBINED_NAME = "all_conditions_comparison.csv"
@@ -52,9 +61,12 @@ CONDITIONS = ["IFNB", "IFNG", "INS", "TGFB1", "TNFA"]
 # Karla-vs-run tables and run-vs-run tables (compare_runs.py).
 META_COLS = {"Condition", "Seed", "Class", "Layer", "Node", "diff"}
 
+# Standard numbering: layer 0 is the input layer, layer 1 the first hidden
+# layer. Comparison tables written before this change use the opposite
+# convention and would be mislabelled here -- regenerate them first.
 LAYERS = {
-    0: {"name": "layer 0 — hidden / TF nodes", "color": "#E45756", "s": 16, "alpha": 0.55},
-    1: {"name": "layer 1 — input / gene features", "color": "#4C78A8", "s": 3, "alpha": 0.20},
+    0: {"name": "layer 0 — input / gene features", "color": "#4C78A8", "s": 3, "alpha": 0.20},
+    1: {"name": "layer 1 — hidden / TF nodes", "color": "#E45756", "s": 16, "alpha": 0.55},
 }
 BOX_COLORS = {"IFNB": "#4C78A8", "IFNG": "#F58518", "INS": "#54A24B",
               "TGFB1": "#B279A2", "TNFA": "#E45756"}
