@@ -15,11 +15,16 @@ import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-RUN_A = os.environ.get("RUN_A", "results_t1_2")
-RUN_B = os.environ.get("RUN_B", "results_t1_3")
+RUN_A = os.environ.get("RUN_A", "results_kpnn2/results_kpnn2_minimal")
+RUN_B = os.environ.get("RUN_B", "results_kpnn2/results_kpnn2_minimal_b")
 LABEL_A = os.environ.get("LABEL_A", "t1_2 KPNN")
 LABEL_B = os.environ.get("LABEL_B", "t1_3 KPNN")
-OUT_NAME = os.environ.get("COMPARISON_OUT", f"{RUN_A}_vs_{RUN_B}".replace("results_", ""))
+def _short(run):
+    """Last path segment, without the results_ prefix — RUN_A may be nested."""
+    return Path(run).name.replace("results_", "")
+
+
+OUT_NAME = os.environ.get("COMPARISON_OUT", f"{_short(RUN_A)}_vs_{_short(RUN_B)}")
 
 # comp/ is split by experiment generation: t1 holds the kpnn v1 era material,
 # t2 the kpnn2 one. Set COMP_SUBDIR="" to write flat into comp/ as before.
@@ -48,7 +53,7 @@ def scores_dir(results_dir, cond):
     """Newest aggregated_scores folder for a condition, whichever layout wrote it.
 
     The kpnn entry points nest their output differently:
-      kpnn v1 / kpnn2_training.py
+      kpnn v1 / kpnn2_port.py
           <root>/kpnn_output/sergio/<COND>_o_A_vs_B/alter_nothing/
           kpnn_output_<ts>/importance_scores/aggregated_scores
       kpnn2_native.py
@@ -59,6 +64,7 @@ def scores_dir(results_dir, cond):
     root = PROJECT_ROOT / results_dir
     bases = [
         root / "kpnn_output/sergio" / f"{cond}_o_A_vs_B",
+        root / f"{cond}_o_A_vs_B",
         root / cond,
     ]
     probe = Path("class_0") / LAYER_FILES[0]
