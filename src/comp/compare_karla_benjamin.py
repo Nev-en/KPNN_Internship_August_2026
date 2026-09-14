@@ -8,12 +8,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # folder holding the <COND>_A_vs_B directories and the scores are located below
 # that by search (see karla_scores_dir).
 KARLA_ROOT = PROJECT_ROOT / os.environ.get(
-    "KARLA_ROOT", "comp/KPNN_Importances_Karla/KPNN_Importances_Karla")
+    "KARLA_ROOT", "comp/data/KPNN_Importances_Karla/KPNN_Importances_Karla")
 
 # Which run to compare against, and where to write the comparison CSVs.
 # Both can be overridden via environment variables.
-RESULTS_DIR = os.environ.get("RESULTS_DIR", "results_t1_2")
-OUT_NAME = os.environ.get("COMPARISON_OUT", "results_new_venv")
+RESULTS_DIR = os.environ.get("RESULTS_DIR", "results_kpnn/results_t1_2")
+OUT_NAME = os.environ.get("COMPARISON_OUT", "results/results_new_venv")
 
 BEN_ROOT = PROJECT_ROOT / RESULTS_DIR / "kpnn_output/sergio"
 

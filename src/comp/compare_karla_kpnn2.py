@@ -15,13 +15,12 @@ write flat into comp/.
 
 What "the same seed" means here
 -------------------------------
-Karla's run and the kpnn2 run share seed numbers but not initial weights: the
-two trainers draw from the RNG in a different order, and kpnn v1's sparse layer
-uses one global uniform bound while kpnn2's MaskedLinear is per-row (the port
-restores v1's bound, but the draw order still differs). Rows are therefore
-matched on seed so the table stays paired and the plots stay comparable, not
-because seed N is expected to reproduce seed N exactly. Read the scatter as a
-distribution comparison, not as a bit-for-bit diff.
+Rows are matched on seed. For kpnn2_port.py with rng="v1" (the default) seed N
+really is Karla's seed N: the port consumes random numbers exactly as kpnn v1
+does and matches her export to r = 1.000 per seed, max|diff| around 3e-5.
+Every other kpnn2 script (native, minimal, port2, or the port with
+rng="torch") draws differently, so there seed N is just another random run and
+the scatter should be read as a distribution comparison, not as a diff.
 """
 import os
 from pathlib import Path
@@ -37,7 +36,7 @@ KARLA_ROOT = Path(
     os.environ.get("KARLA_ROOT", PROJECT_ROOT / "results_kpnn/KPNN_results_karla_new")
 )
 
-RESULTS_DIR = os.environ.get("RESULTS_DIR", "results_kpnn2")
+RESULTS_DIR = os.environ.get("RESULTS_DIR", "results_kpnn2/results_kpnn2_native")
 OUT_NAME = os.environ.get("COMPARISON_OUT", "karla_new_vs_kpnn2")
 
 # comp/ is split by experiment generation: t1 holds the kpnn v1 era material,
@@ -69,7 +68,7 @@ def kpnn2_scores_dir(cond):
     """Newest aggregated_scores folder for a condition, whichever layout wrote it.
 
     The two kpnn2 entry points nest their output differently:
-      kpnn2_training.py  <root>/kpnn_output/sergio/<COND>_o_A_vs_B/alter_nothing/
+      kpnn2_port.py  <root>/kpnn_output/sergio/<COND>_o_A_vs_B/alter_nothing/
                          kpnn_output_<ts>/importance_scores/aggregated_scores
       kpnn2_native.py    <root>/<COND>/run_<ts>/aggregated_scores
 
@@ -77,6 +76,7 @@ def kpnn2_scores_dir(cond):
     """
     bases = [
         KPNN2_ROOT / "kpnn_output/sergio" / f"{cond}_o_A_vs_B",
+        KPNN2_ROOT / f"{cond}_o_A_vs_B",
         KPNN2_ROOT / cond,
     ]
     probe = Path("class_0") / LAYER_FILES[0]

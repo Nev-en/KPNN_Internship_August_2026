@@ -119,29 +119,90 @@ def to_kpnn2_edgelist(edgelist: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def v1_node_order(edgelist: pd.DataFrame):
+    """Node order as kpnn v1 builds it: first appearance in the TSV.
+
+    kpnn2 sorts ``layer_nodes`` alphabetically. v1 keeps the file's order, and
+    ``match_data_and_network`` then reorders the data columns to match. So
+    column j of v1's input tensor is a different gene than column j of an
+    ``align_inputs`` tensor -- and since dropout draws a mask over columns, the
+    same random numbers would knock out different genes.
+
+    Returns (genes, tfs) as lists.
+    """
+    rows = edgelist[edgelist["layer_parent"] == 1]
+    genes = list(dict.fromkeys(rows["child"]))
+    tfs = list(dict.fromkeys(rows["parent"]))
+    return genes, tfs
+
+
+def v1_edge_order(edgelist: pd.DataFrame, genes: Sequence[str], tfs: Sequence[str]):
+    """The gene -> TF edges numbered as kpnn v1 numbers them.
+
+    v1 builds its connection index straight from the rows of the TSV::
+
+        indices = [[nodes[i-1].index(c) for c in el.child],
+                   [nodes[i].index(p)   for p in el.parent]]
+
+    so edge k is row k of the file, and the flat ``uniform_`` over nnz entries
+    gives edge k the random number at position k. For INS only 7 of 845 edges
+    would land in the same slot under kpnn2's alphabetical numbering.
+
+    Indices point into `genes` / `tfs`, which must be v1's order.
+    """
+    gi = {n: i for i, n in enumerate(genes)}
+    ti = {n: i for i, n in enumerate(tfs)}
+    rows = edgelist[edgelist["layer_parent"] == 1]
+    pairs = [(gi[r.child], ti[r.parent]) for r in rows.itertuples()]
+    source = torch.tensor([a for a, _ in pairs], dtype=torch.long)
+    target = torch.tensor([b for _, b in pairs], dtype=torch.long)
+    return source, target
+
+
 # --- model ---------------------------------------------------------------------
 
 
 class Kpnn2Model(nn.Module):
-    """kpnn v1's ``KpnnModel`` rebuilt on kpnn2's ``MaskedLinear``.
+    """kpnn v1's ``KpnnModel`` rebuilt on kpnn2's ``PackedLinear``.
+
+    PackedLinear rather than MaskedLinear, because the goal here is to consume
+    the random number stream exactly as v1 does. MaskedLinear stores a dense
+    ``(out, in)`` weight and therefore draws ``out * in`` numbers -- 7830 for
+    INS, of which only 845 are ever used. PackedLinear stores a 1-D vector of
+    length nnz and draws 845, matching v1's ``torch.empty(845).uniform_()``.
+
+    CONTEXT.md notes PackedLinear "is not a better default" and is meant for
+    RAM on large graphs. Using it to reproduce a draw order is off-label; that
+    is the price of bit-exactness and the reason kpnn2_port.py does not do it.
 
     Only binary classification is implemented, which is all the Sergio
     comparison needs and all ``kpnn_config.yaml`` configures.
     """
 
-    def __init__(self, spec: kpnn2.LayeredSpec, hyperparameters: dict) -> None:
+    def __init__(
+        self,
+        spec: kpnn2.LayeredSpec,
+        hyperparameters: dict,
+        source_index: torch.Tensor,
+        target_index: torch.Tensor,
+    ) -> None:
         super().__init__()
         if len(spec.layer_dims) != 3:
             raise ValueError(
                 f"expected genes -> TFs -> output (3 layers), got "
                 f"{spec.layer_dims}. Deeper networks would need one "
-                f"MaskedLinear per hop here."
+                f"PackedLinear per hop here."
             )
 
         self.spec = spec
         self.dropout_in = nn.Dropout(p=hyperparameters["dropout"])
-        # hops[0] is the gene -> TF mask; this is the only sparse layer.
-        self.masked = kpnn2.MaskedLinear(spec.hops[0].mask)
+        # Edges are handed over in v1's file order, so weight[k] is v1's edge k.
+        self.packed = kpnn2.PackedLinear(
+            source_index=source_index,
+            target_index=target_index,
+            out_features=spec.layer_dims[1],
+            in_features=spec.layer_dims[0],
+        )
         self.activation = _activation_from_config(
             hyperparameters.get("activation_function", {})
         )
@@ -150,10 +211,6 @@ class Kpnn2Model(nn.Module):
         self.output = nn.Linear(spec.layer_dims[1], 1)
         self.sigmoid = nn.Sigmoid()
 
-        _apply_v1_init(self.masked, spec.hops[0].mask)
-        with torch.no_grad():
-            self.output.bias.zero_()
-
     def forward_logits(self, x: torch.Tensor) -> torch.Tensor:
         """The attribution path: everything except the final sigmoid.
 
@@ -161,7 +218,7 @@ class Kpnn2Model(nn.Module):
         v1 exposes the same separate path.
         """
         h = self.dropout_in(x)
-        h = self.masked(h)
+        h = self.packed(h)
         h = self.activation(h)
         h = self.dropout_hidden(h)
         return self.output(h)
@@ -182,30 +239,47 @@ def _activation_from_config(config: dict) -> nn.Module:
     raise ValueError(f"unsupported activation function: {name!r}")
 
 
-def _apply_v1_init(layer: kpnn2.MaskedLinear, mask: torch.Tensor) -> None:
-    """Reproduce ``SparseLinear.initialize_weights`` from kpnn v1.
+def apply_v1_init(model: "Kpnn2Model", seed: int) -> None:
+    """Redraw every parameter in exactly the order kpnn v1 draws them.
 
-    v1 draws every edge weight from one uniform distribution whose bound comes
-    from the *average* fan-in over output neurons, and fills the bias with 0.01.
-    kpnn2's own init is per-row instead, so it is overwritten here.
+    The modules were already built, and building them consumed random numbers.
+    So the seed is set again here and the whole stream is replayed by hand,
+    which is the only way to be sure nothing extra was taken.
 
-    The trainable tensor is ``parametrizations.weight.original``; assigning to
-    ``layer.weight`` copies into it. Masked-out entries are drawn too but never
-    reach the output, exactly as v1's dense-init-then-mask would behave.
+    v1's KpnnModel.__init__ draws, in this order:
+
+      1. SparseLinear weights -- one flat ``uniform_`` over nnz entries, bound
+         sqrt(6 / average_fan_in). The bias is *not* drawn: it is filled with
+         the constant 0.01.
+      2. nn.Linear(n_tfs, 1) -- PyTorch's own reset_parameters, i.e.
+         kaiming_uniform_ on the weight then uniform_ on the bias. v1 then
+         overwrites the bias with 0, but the draw has already happened, so it
+         must happen here too or everything downstream shifts.
+
+    nn.Dropout and nn.PReLU draw nothing (PReLU fills a constant), so they do
+    not appear.
+
+    After this the stream sits where v1's does, which is what makes the
+    DataLoader shuffle and the dropout masks line up during training.
     """
-    n_connections = int(mask.sum().item())
-    n_output_neurons = int((mask.sum(dim=1) > 0).sum().item())
-    if n_connections == 0 or n_output_neurons == 0:
-        raise ValueError("mask has no connections")
+    torch.manual_seed(seed)
 
-    average_fan_in = n_connections / n_output_neurons
-    bound = math.sqrt(6.0 / average_fan_in)
+    nnz = model.packed.weight.numel()
+    n_out = model.spec.layer_dims[1]
+    bound = math.sqrt(6.0 / (nnz / n_out))
 
-    original = layer.parametrizations.weight.original
     with torch.no_grad():
-        original.uniform_(-bound, bound)
-        if layer.bias is not None:
-            layer.bias.fill_(0.01)
+        # 1. sparse layer, v1 edge order, flat draw
+        model.packed.weight.uniform_(-bound, bound)
+        if model.packed.bias is not None:
+            model.packed.bias.fill_(0.01)
+
+        # 2. output layer, PyTorch defaults, then bias zeroed as v1 does
+        nn.init.kaiming_uniform_(model.output.weight, a=math.sqrt(5))
+        fan_in, _ = nn.init._calculate_fan_in_and_fan_out(model.output.weight)
+        out_bound = 1.0 / math.sqrt(fan_in)
+        nn.init.uniform_(model.output.bias, -out_bound, out_bound)
+        model.output.bias.zero_()
 
 
 # --- data ----------------------------------------------------------------------
@@ -288,11 +362,16 @@ def train_one_model(
     hyperparameters: dict,
     seed: int,
     device: torch.device,
+    edges: Tuple[torch.Tensor, torch.Tensor],
 ) -> Tuple[Kpnn2Model, Dict[str, float]]:
     """Train a single model for one seed and return it with its metrics."""
     set_global_seed(seed)
 
-    model = Kpnn2Model(spec, hyperparameters).to(device)
+    source_index, target_index = edges
+    model = Kpnn2Model(spec, hyperparameters, source_index, target_index).to(device)
+    # Building the modules already consumed random numbers; replay the stream
+    # from the seed so it matches v1 draw for draw.
+    apply_v1_init(model, seed)
     criterion = nn.BCELoss()
     optimizer = _build_optimizer(model, hyperparameters)
     scheduler = _build_scheduler(optimizer, hyperparameters)
@@ -369,7 +448,7 @@ def compute_attributions(
     baseline = torch.zeros_like(test_x)
 
     ig = IntegratedGradients(model.forward_logits)
-    conductance = LayerConductance(model.forward_logits, model.masked)
+    conductance = LayerConductance(model.forward_logits, model.packed)
 
     feature_parts: List[torch.Tensor] = []
     hidden_parts: List[torch.Tensor] = []
@@ -448,8 +527,9 @@ def run(
     label_column = additional_settings.get("data_label_column", "cell_type_class_int")
 
     spec = kpnn2.parse_layered(to_kpnn2_edgelist(edgelist))
-    gene_names = spec.layer_nodes[0]
-    tf_names = spec.layer_nodes[1]
+    # v1's node order, not the spec's alphabetical one -- see v1_node_order.
+    gene_names, tf_names = v1_node_order(edgelist)
+    edges = v1_edge_order(edgelist, gene_names, tf_names)
     print(
         f"[{condition or 'run'}] network: {len(gene_names)} genes -> "
         f"{len(tf_names)} TFs -> {len(spec.layer_nodes[2])} output "
@@ -459,11 +539,13 @@ def run(
     tensors: Dict[str, Tuple[torch.Tensor, torch.Tensor]] = {}
     test_labels: Optional[np.ndarray] = None
     for split in ("train", "val", "test"):
-        frame = anndata_to_frame(datasets[split], spec.input_nodes)
+        frame = anndata_to_frame(datasets[split], gene_names)
         labels = labels_from_obs(datasets[split], label_column)
         frame, labels = filter_and_relabel(frame, labels, filter_classes)
+        # Ordered by hand rather than with kpnn2.align_inputs, because that
+        # orders by spec.input_nodes (alphabetical) and v1 does not.
         tensors[split] = (
-            kpnn2.align_inputs(frame, spec),
+            torch.tensor(frame[list(gene_names)].to_numpy(), dtype=torch.float32),
             torch.tensor(labels, dtype=torch.float32),
         )
         if split == "test":
@@ -478,7 +560,7 @@ def run(
     metric_rows = []
     for seed in random_seeds:
         model, metrics = train_one_model(
-            spec, tensors, nn_hyperparameters, seed, device
+            spec, tensors, nn_hyperparameters, seed, device, edges
         )
         model_id = generate_model_id(seed)
 

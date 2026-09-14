@@ -1,6 +1,6 @@
 """Knowledge-primed neural network training, written the way kpnn2 intends.
 
-This is not a port of kpnn v1. Where the port in kpnn2_training.py mirrors v1's
+This is not a port of kpnn v1. Where the port in kpnn2_port.py mirrors v1's
 choices so the numbers stay comparable, this script makes the choices that are
 actually right for the job and follows the module shape CONTEXT.md prescribes:
 one MaskedLinear per hop, a `saved` dict fed through `gather_hop_inputs`, and
@@ -43,7 +43,7 @@ Usage
 -----
     python kpnn2_native.py --condition INS
     python kpnn2_native.py --condition INS --epochs 20 --seeds 5
-    python kpnn2_native.py --condition INS --swap-labels   # match Karla's run
+    python kpnn2_native.py --condition INS --no-swap-labels  # natural labels
 """
 from __future__ import annotations
 
@@ -67,6 +67,7 @@ from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 
 import kpnn2
+import parameter_tables
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -97,10 +98,10 @@ class TrainConfig:
 
     # --- data ---
     label_column: str = "cell_type_class_int"
-    # Karla's kpnn v1 call passes filter_classes={0: 1, 1: 0}, which relabels
-    # 0<->1. Off by default because swapping labels is not a sensible default;
-    # turn it on to line up with that reference run.
-    swap_labels: bool = False
+    # kpnn v1 is called with filter_classes={0: 1, 1: 0}, which relabels
+    # 0<->1. On by default so every script in src/kpnn2_scripts follows v1;
+    # pass --no-swap-labels for the natural labels from class_mapping.txt.
+    swap_labels: bool = True
 
     # --- attribution ---
     ig_steps: int = 50
@@ -222,9 +223,11 @@ def load_split(path: Path, spec: kpnn2.LayeredSpec, config: TrainConfig) -> Spli
         columns=[f"{name}{LEAF_SUFFIX}" for name in adata.var.index],
     )
 
-    labels = _labels(adata, config)
-    if config.swap_labels:
-        labels = 1 - labels
+    # v1 expresses this as filter_classes={0: 1, 1: 0}: keep these classes and
+    # relabel them to these values. Spelled as a mapping rather than "1 - y",
+    # so a third class raises a KeyError instead of quietly becoming -1.
+    relabel = {0: 1, 1: 0} if config.swap_labels else {0: 0, 1: 1}
+    labels = np.array([relabel[int(v)] for v in _labels(adata, config)], dtype=np.int64)
 
     return Split(x=kpnn2.align_inputs(frame, spec), y=torch.tensor(labels, dtype=torch.float32))
 
@@ -315,12 +318,17 @@ def train(
     splits: Dict[str, Split],
     config: TrainConfig,
     seed: int,
-) -> Tuple[KpnnNet, Dict[str, float]]:
-    """Train one model, restoring the epoch with the lowest validation loss."""
+) -> Tuple[KpnnNet, Dict[str, float], list]:
+    """Train one model, restoring the epoch with the lowest validation loss.
+
+    Also returns the parameter snapshot taken before the first step, so the
+    caller can report how far each weight and bias moved.
+    """
     seed_everything(seed)
     device = config.torch_device
 
     model = KpnnNet(spec, config).to(device)
+    initial = parameter_tables.snapshot(model.hops)
     optimizer = torch.optim.Adam(
         model.parameters(), lr=config.lr, weight_decay=config.weight_decay
     )
@@ -362,7 +370,7 @@ def train(
     metrics = {"best_epoch": best_epoch}
     for name in ("train", "val", "test"):
         metrics.update(evaluate(model, splits[name], device).as_dict(name))
-    return model, metrics
+    return model, metrics, initial
 
 
 # --- attribution ---------------------------------------------------------------
@@ -554,7 +562,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="defaults to src/Karla_kpnn_csv/<condition>_tf_only_edgelist_filtered.tsv",
     )
     parser.add_argument("--data-dir", type=Path, default=PROJECT_ROOT / "Sergio_Data_Karla_new")
-    parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "results_kpnn2_native")
+    parser.add_argument("--output-dir", type=Path, default=PROJECT_ROOT / "results_kpnn2/results_kpnn2_native")
     parser.add_argument("--seeds", type=int, default=len(defaults.seeds),
                         help="train seeds 1..N")
     parser.add_argument("--epochs", type=int, default=defaults.epochs)
@@ -563,8 +571,10 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--dropout", type=float, default=defaults.dropout)
     parser.add_argument("--ig-steps", type=int, default=defaults.ig_steps)
     parser.add_argument("--device", default=defaults.device)
-    parser.add_argument("--swap-labels", action="store_true",
-                        help="relabel 0<->1, matching Karla's kpnn v1 run")
+    parser.add_argument("--no-swap-labels", dest="swap_labels",
+                        action="store_false",
+                        help="keep the labels from class_mapping.txt instead of "
+                             "v1's 0<->1 relabelling")
     parser.add_argument("--save-models", action="store_true",
                         help="write a spec+state_dict checkpoint per seed")
     return parser.parse_args(argv)
@@ -600,8 +610,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     for name, split in splits.items():
         counts = np.bincount(split.labels, minlength=2)
         print(f"   {name:5s} {len(split):5d} cells   class 0/1: {counts[0]}/{counts[1]}")
-    if config.swap_labels:
-        print("   labels swapped (0<->1) to match Karla's kpnn v1 run")
+    print(
+        "   labels swapped 0<->1, as kpnn v1 does"
+        if config.swap_labels
+        else "   labels kept as in class_mapping.txt -- NOT comparable to a v1 run"
+    )
 
     run_dir = (
         args.output_dir
@@ -610,10 +623,14 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     )
 
     metrics, attributions = [], []
+    edge_rows, bias_rows = [], []
     for seed in config.seeds:
-        model, seed_metrics = train(spec, splits, config, seed)
+        model, seed_metrics, initial = train(spec, splits, config, seed)
         attributions.append(tidy(attribute(model, splits["test"], spec, config), seed))
         metrics.append({"seed": seed, **seed_metrics})
+        # What the network learned, named: one row per edge, one per biased node.
+        edge_rows.append(parameter_tables.edge_table(model.hops, spec, initial, seed))
+        bias_rows.append(parameter_tables.bias_table(model.hops, spec, initial, seed))
         if args.save_models:
             save_checkpoint(run_dir / "models" / f"seed_{seed}.pt", spec, model)
         print(
@@ -624,6 +641,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         )
 
     write_run(run_dir, spec, config, metrics, attributions)
+    parameter_tables.write_tables(
+        run_dir,
+        pd.concat(edge_rows, ignore_index=True),
+        pd.concat(bias_rows, ignore_index=True),
+    )
     print(f"\nWrote {len(metrics)} seeds to {run_dir}")
 
 

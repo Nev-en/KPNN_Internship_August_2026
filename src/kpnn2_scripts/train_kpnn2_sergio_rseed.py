@@ -1,7 +1,7 @@
 """kpnn2 port of train_kpnn_sergio_rseed.py.
 
 Same inputs, same output layout, same hyperparameters -- but the network is
-built with kpnn2 and trained by the loop in kpnn2_training.py instead of by
+built with kpnn2 and trained by the loop in kpnn2_port.py instead of by
 kpnn.train_kpnns(). See that module's docstring for what was mirrored from
 kpnn v1 and where the two necessarily differ.
 
@@ -15,6 +15,8 @@ RESULTS_DIR     output root (default results_kpnn2)
 DATA_DIR        folder holding the sergio_<COND> split folders
 KPNN2_SEEDS     number of random seeds (default 20)
 KPNN2_DETERMINISTIC  set to 0 to skip torch.use_deterministic_algorithms
+KPNN2_RNG       "v1" (default) draws random numbers as kpnn v1 does; "torch"
+                reproduces runs made before that, e.g. results_kpnn2_v1
 """
 import os
 
@@ -40,7 +42,7 @@ import torch
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import kpnn2_training
+import kpnn2_port
 
 
 # ============================================================
@@ -65,7 +67,7 @@ if os.environ.get("KPNN2_DETERMINISTIC", "1") != "0":
 
 # ===== paths =====
 COND = os.environ.get("SERGIO_COND", "TGFB1")
-RESULTS_DIR = os.environ.get("RESULTS_DIR", "results_kpnn2")
+RESULTS_DIR = os.environ.get("RESULTS_DIR", "results_kpnn2/results_kpnn2_v1")
 DATA_DIR = os.environ.get("DATA_DIR", "Sergio_Data_Karla_new")
 
 project_root = Path(__file__).resolve().parents[2]
@@ -140,7 +142,7 @@ edgelist = pd.read_csv(edgelist_path, sep="\t")
 # ===== train =====
 output_path.mkdir(parents=True, exist_ok=True)
 n_seeds = int(os.environ.get("KPNN2_SEEDS", "20"))
-kpnn2_training.run(
+kpnn2_port.run(
     edgelist=edgelist,
     datasets=datasets,
     nn_hyperparameters=nn_hyperparameters,
@@ -150,6 +152,7 @@ kpnn2_training.run(
     captum_n_steps=50,
     filter_classes={0: 1, 1: 0},  # matches Karla's kpnn v1 call (swaps labels)
     condition=COND,
+    rng=os.environ.get("KPNN2_RNG", "v1"),
 )
 
 print("Training done. Output at:", output_path)

@@ -21,11 +21,11 @@ import pandas as pd
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import kpnn2_training
+import kpnn2_port
 
 # ===== paths =====
 COND = os.environ.get("SERGIO_COND", "INS")
-RESULTS_DIR = os.environ.get("RESULTS_DIR", "results_kpnn2")
+RESULTS_DIR = os.environ.get("RESULTS_DIR", "results_kpnn2/results_kpnn2_v1")
 
 project_root = Path(__file__).resolve().parents[2]
 edgelist_path = project_root / f"src/Karla_kpnn_csv/{COND}_tf_only_edgelist_filtered.tsv"
@@ -101,7 +101,7 @@ edgelist = pd.read_csv(edgelist_path, sep="\t")
 # ===== train =====
 output_path.mkdir(parents=True, exist_ok=True)
 n_seeds = int(os.environ.get("KPNN2_SEEDS", "20"))
-kpnn2_training.run(
+kpnn2_port.run(
     edgelist=edgelist,
     datasets=datasets,
     nn_hyperparameters=nn_hyperparameters,
