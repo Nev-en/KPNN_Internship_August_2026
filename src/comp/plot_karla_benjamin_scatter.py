@@ -9,10 +9,15 @@ files (plain comma CSVs) are read instead, so older result folders still work.
 
 Figures
 -------
-`<COND>_scatter.png`           Karla (x) vs Benjamin (y), one panel per layer.
-`all_conditions_scatter.png`   the same, layers as rows, conditions as columns.
-`diff_boxplots.png`            |Karla - Benjamin| per condition, box = IQR,
+`<COND>_scatter.svg`           Karla (x) vs Benjamin (y), one panel per layer.
+`all_conditions_scatter.svg`   the same, layers as rows, conditions as columns.
+`diff_boxplots.svg`            |Karla - Benjamin| per condition, box = IQR,
                                whiskers = 1.5x IQR, points = values outside them.
+
+Styling (size cap, 6 pt Liberation Sans, transparent SVG, colour = condition,
+marker = layer) comes from figure_style.py. Scatter points and outliers are
+rasterized inside the SVG: hundreds of thousands of vector dots would make the
+files huge and slow to open.
 
 Scatter panels are split by layer because the two differ by orders of magnitude:
 layer 1 (hidden / TF nodes) is a few dozen nodes with attributions up to ~20,
@@ -27,15 +32,18 @@ COMPARISON_IN names the table folder inside it and PLOT_OUT the figure folder --
 change the two together, or the output folder name will not match the data it
 holds. Both accept nested names, e.g. PLOT_OUT=plots/plots_foo. Set
 COMP_SUBDIR="" to read and write flat in comp/ as before.
+
+Run names in the figures come from figure_style.DISPLAY_NAMES; X_LABEL and
+Y_LABEL override them for one run of the script.
 """
 import os
 from pathlib import Path
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.ticker import FuncFormatter, MaxNLocator
+
+import figure_style as fs
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 IN_NAME = os.environ.get("COMPARISON_IN", "karla_new_vs_kpnn2_native")
@@ -54,7 +62,7 @@ COMBINED_NAME = "all_conditions_comparison.csv"
 SEP = ";"
 DECIMAL = ","
 
-CONDITIONS = ["IFNB", "IFNG", "INS", "TGFB1", "TNFA"]
+CONDITIONS = fs.CONDITIONS
 
 # Everything else in the table is metadata; the two remaining columns are the
 # pair being compared. Reading them from the file lets the same script plot
@@ -64,12 +72,7 @@ META_COLS = {"Condition", "Seed", "Class", "Layer", "Node", "diff"}
 # Standard numbering: layer 0 is the input layer, layer 1 the first hidden
 # layer. Comparison tables written before this change use the opposite
 # convention and would be mislabelled here -- regenerate them first.
-LAYERS = {
-    0: {"name": "layer 0 — input / gene features", "color": "#4C78A8", "s": 3, "alpha": 0.20},
-    1: {"name": "layer 1 — hidden / TF nodes", "color": "#E45756", "s": 16, "alpha": 0.55},
-}
-BOX_COLORS = {"IFNB": "#4C78A8", "IFNG": "#F58518", "INS": "#54A24B",
-              "TGFB1": "#B279A2", "TNFA": "#E45756"}
+LAYER_ALPHA = {0: 0.25, 1: 0.6}
 
 # |diff| spans ~1e-14 to ~25 and contains exact zeros, so a plain log axis
 # cannot draw all of it. symlog is linear below LINTHRESH (where the zeros sit)
@@ -110,9 +113,8 @@ def value_columns(df):
     return cols
 
 
-def draw_scatter(ax, df, layer, title, x_col, y_col):
+def draw_scatter(ax, df, cond, layer, title, x_col, y_col, label_axes=True):
     """One scatter panel: first value column on x, second on y, y=x reference."""
-    st = LAYERS[layer]
     x, y = df[x_col].to_numpy(), df[y_col].to_numpy()
 
     lo = float(min(x.min(), y.min()))
@@ -120,21 +122,26 @@ def draw_scatter(ax, df, layer, title, x_col, y_col):
     pad = 0.05 * (hi - lo) if hi > lo else 1.0
     lo, hi = lo - pad, hi + pad
 
-    ax.axhline(0, lw=0.5, color="0.88", zorder=0)
-    ax.axvline(0, lw=0.5, color="0.88", zorder=0)
+    ax.axhline(0, lw=0.4, color=fs.ZERO_COLOR, zorder=0)
+    ax.axvline(0, lw=0.4, color=fs.ZERO_COLOR, zorder=0)
     # y = x means the two runs agree exactly
-    ax.plot([lo, hi], [lo, hi], ls="--", lw=1.0, color="0.4", zorder=3)
+    ax.plot([lo, hi], [lo, hi], ls="--", lw=0.5, color=fs.GUIDE_COLOR, zorder=3)
 
-    ax.scatter(x, y, s=st["s"], alpha=st["alpha"], color=st["color"],
+    ax.scatter(x, y, s=fs.LAYER_POINT_AREA[layer], marker=fs.LAYER_MARKERS[layer],
+               alpha=LAYER_ALPHA[layer], color=fs.CONDITION_COLORS.get(cond, "0.4"),
                linewidths=0, zorder=2, rasterized=True)
 
     r = np.corrcoef(x, y)[0, 1]
     ax.set_xlim(lo, hi)
     ax.set_ylim(lo, hi)
     ax.set_aspect("equal")
-    ax.set_xlabel(x_col)
-    ax.set_ylabel(y_col)
-    ax.set_title(f"{title}\nr={r:.4f}  max|diff|={df['diff'].max():.3g}", fontsize=9.5)
+    ax.xaxis.set_major_locator(MaxNLocator(4))
+    ax.yaxis.set_major_locator(MaxNLocator(4))
+    if label_axes:
+        ax.set_xlabel(fs.display(x_col))
+        ax.set_ylabel(fs.display(y_col))
+    ax.set_title(f"{title}\nr={r:.4f}  max|diff|={df['diff'].max():.3g}")
+    fs.tidy(ax)
     return r
 
 
@@ -143,39 +150,42 @@ def make_boxplots(df, conds, x_col, y_col):
     data = [df.loc[df["Condition"] == c, "diff"].to_numpy() for c in conds]
     all_zero = all(d.max() == 0 for d in data)
 
-    fig, ax = plt.subplots(figsize=(1.6 * len(conds) + 4.5, 7.0), constrained_layout=True)
+    fig, ax = fs.subplots(120, 80)
     bp = ax.boxplot(
         data, tick_labels=conds, whis=1.5, showfliers=True, patch_artist=True,
         widths=0.55,
-        medianprops=dict(color="black", lw=1.8),
-        boxprops=dict(lw=1.0, edgecolor="black"),
-        whiskerprops=dict(lw=1.0, color="black"),
-        capprops=dict(lw=1.0, color="black"),
-        flierprops=dict(marker=".", markersize=1.6, markerfacecolor="black",
+        medianprops=dict(color="black", lw=0.9),
+        boxprops=dict(lw=0.5, edgecolor="black"),
+        whiskerprops=dict(lw=0.5, color="black"),
+        capprops=dict(lw=0.5, color="black"),
+        flierprops=dict(marker="o", markersize=0.8, markerfacecolor="black",
                         markeredgecolor="none", alpha=0.18),
     )
     for patch, cond in zip(bp["boxes"], conds):
-        patch.set_facecolor(BOX_COLORS.get(cond, "#888888"))
-        patch.set_alpha(0.55)
+        patch.set_facecolor(fs.CONDITION_COLORS.get(cond, "0.6"))
+        patch.set_alpha(0.7)
     for fl in bp["fliers"]:          # ~44k points across all boxes
         fl.set_rasterized(True)
 
     ax.set_yscale("symlog", linthresh=LINTHRESH)
+    # Plain "1e-5" labels: the default 10^x labels are mathtext, which would
+    # not be set in Liberation Sans.
+    ax.yaxis.set_major_formatter(FuncFormatter(
+        lambda v, _: "0" if v == 0 else f"{v:.0e}".replace("e-0", "e-").replace("e+0", "e")))
     if all_zero:                       # identical runs: symlog can't autoscale a flat 0
         ax.set_ylim(-LINTHRESH, 1.0)
-    ax.set_ylabel(f"|{x_col} − {y_col}|")
+    ax.set_ylabel(f"|{fs.display(x_col)} − {fs.display(y_col)}|")
     ax.set_xlabel("Condition")
     subtitle = ("every value identical — the two runs agree exactly"
                 if all_zero else
                 "box = interquartile range · whiskers = 1.5 × IQR · "
                 "points = values beyond the whiskers")
-    ax.set_title(f"Disagreement between {x_col} and {y_col}\n{subtitle}", fontsize=11)
-    ax.grid(axis="y", ls=":", lw=0.6, color="0.8")
+    ax.set_title(f"Disagreement between {fs.display(x_col)} and {fs.display(y_col)}\n{subtitle}")
+    ax.grid(axis="y", ls=":", lw=0.4, color=fs.ZERO_COLOR)
     ax.set_axisbelow(True)
+    fs.tidy(ax)
 
-    out = OUT_DIR / "diff_boxplots.png"
-    fig.savefig(out, dpi=200)
-    plt.close(fig)
+    out = fs.save(fig, OUT_DIR / "diff_boxplots")
 
     print(f"\n-> {out}")
     for c, d in zip(conds, data):
@@ -192,30 +202,29 @@ def main():
 
     df = load_comparison()
     x_col, y_col = value_columns(df)
+    fs.label_overrides(x_col, y_col)
     print(f"comparing '{x_col}' (x) vs '{y_col}' (y)")
     conds = [c for c in CONDITIONS if (df["Condition"] == c).any()]
     frames = {c: df[df["Condition"] == c] for c in conds}
 
     # --- one scatter figure per condition: the two layers side by side ---
     for cond, sub in frames.items():
-        fig, axes = plt.subplots(1, 2, figsize=(11.5, 6.0), constrained_layout=True)
+        fig, axes = fs.subplots(120, 66, 1, 2)
         stats = []
         for ax, layer in zip(axes, (0, 1)):
             part = sub[sub["Layer"] == layer]
             if part.empty:
                 ax.axis("off")
                 continue
-            stats.append((layer, draw_scatter(ax, part, layer, LAYERS[layer]["name"], x_col, y_col), len(part)))
-        fig.suptitle(f"{cond} — {x_col} vs {y_col}", fontsize=13)
-        out = OUT_DIR / f"{cond}_scatter.png"
-        fig.savefig(out, dpi=200)
-        plt.close(fig)
+            r = draw_scatter(ax, part, cond, layer, fs.LAYER_NAMES[layer], x_col, y_col)
+            stats.append((layer, r, len(part)))
+        fig.suptitle(f"{cond} — {fs.display(x_col)} vs {fs.display(y_col)}")
+        out = fs.save(fig, OUT_DIR / f"{cond}_scatter")
         desc = "  ".join(f"L{l}: n={n:,} r={r:.4f}" for l, r, n in stats)
         print(f"[{cond}] {desc}  -> {out.name}")
 
     # --- overview: layers as rows, conditions as columns ---
-    fig, axes = plt.subplots(2, len(conds), figsize=(4.0 * len(conds), 8.6),
-                             constrained_layout=True)
+    fig, axes = fs.subplots(160, 80, 2, len(conds))
     # subplots() drops dimensions when a grid is 1 wide, so force the 2 x ncond shape
     axes = np.asarray(axes).reshape(2, len(conds))
     for col, (cond, sub) in enumerate(frames.items()):
@@ -225,16 +234,16 @@ def main():
             if part.empty:
                 ax.axis("off")
                 continue
-            draw_scatter(ax, part, layer, cond if row == 0 else "", x_col, y_col)
+            draw_scatter(ax, part, cond, layer, cond if row == 0 else "", x_col, y_col,
+                         label_axes=False)
             if row == 1:
                 r = np.corrcoef(part[x_col], part[y_col])[0, 1]
-                ax.set_title(f"r={r:.4f}", fontsize=9.5)
+                ax.set_title(f"r={r:.4f}")
     for row, layer in enumerate((0, 1)):
-        axes[row, 0].set_ylabel(f"{LAYERS[layer]['name']}\n{y_col}", fontsize=10)
-    fig.suptitle(f"{x_col} vs {y_col} — {IN_NAME}", fontsize=15)
-    out = OUT_DIR / "all_conditions_scatter.png"
-    fig.savefig(out, dpi=200)
-    plt.close(fig)
+        axes[row, 0].set_ylabel(f"{fs.LAYER_NAMES[layer]}\n{fs.display(y_col)}")
+    fig.supxlabel(fs.display(x_col))
+    fig.suptitle(f"{fs.display(x_col)} vs {fs.display(y_col)}")
+    out = fs.save(fig, OUT_DIR / "all_conditions_scatter")
     print(f"\n-> {out}")
 
     # --- boxplots of the disagreement, one box per condition ---

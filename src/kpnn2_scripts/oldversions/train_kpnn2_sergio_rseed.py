@@ -17,7 +17,12 @@ KPNN2_SEEDS     number of random seeds (default 20)
 KPNN2_DETERMINISTIC  set to 0 to skip torch.use_deterministic_algorithms
 KPNN2_RNG       "v1" (default) draws random numbers as kpnn v1 does; "torch"
                 reproduces runs made before that, e.g. results_kpnn2_v1
+KPNN2_PORT      module to train with (default kpnn2_port); kpnn2_port_alt is
+                the early port without reseeding, which ignores KPNN2_RNG
+                kpnn2_port_noinfusion trains with v1's random numbers but
+                without v1's starting weights
 """
+import importlib
 import os
 
 # ============================================================
@@ -42,7 +47,8 @@ import torch
 import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import kpnn2_port
+PORT_MODULE = os.environ.get("KPNN2_PORT", "kpnn2_port")
+port = importlib.import_module(PORT_MODULE)
 
 
 # ============================================================
@@ -142,7 +148,7 @@ edgelist = pd.read_csv(edgelist_path, sep="\t")
 # ===== train =====
 output_path.mkdir(parents=True, exist_ok=True)
 n_seeds = int(os.environ.get("KPNN2_SEEDS", "20"))
-kpnn2_port.run(
+port.run(
     edgelist=edgelist,
     datasets=datasets,
     nn_hyperparameters=nn_hyperparameters,
@@ -152,7 +158,8 @@ kpnn2_port.run(
     captum_n_steps=50,
     filter_classes={0: 1, 1: 0},  # matches Karla's kpnn v1 call (swaps labels)
     condition=COND,
-    rng=os.environ.get("KPNN2_RNG", "v1"),
+    # Only the current port knows rng; kpnn2_port_alt predates it.
+    **({"rng": os.environ.get("KPNN2_RNG", "v1")} if PORT_MODULE == "kpnn2_port" else {}),
 )
 
 print("Training done. Output at:", output_path)
